@@ -1,16 +1,50 @@
-#include <iostream>
+#include "Timetable.h"
+#include <mpi.h>
+#include <cstring>
 
-// TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
-int main() {
-    // TIP Press <shortcut actionId="RenameElement"/> when your caret is at the <b>lang</b> variable name to see how CLion can help you rename it.
-    auto lang = "C++";
-    std::cout << "Hello and welcome to " << lang << "!\n";
+std::vector<ClassObject> create_dataset() {
+    return {
+                {0, 101, 201, "Math"},
+                {1, 102, 201, "Physics"},
+                {2, 101, 202, "CS"},
+                {3, 103, 203, "English"},
+                {4, 102, 203, "Sport"}
+    };
+}
 
-    for (int i = 1; i <= 5; i++) {
-        // TIP Press <shortcut actionId="Debug"/> to start debugging your code. We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.
-        std::cout << "i = " << i << std::endl;
+int main(int argc, char** argv) {
+    int provided;
+    MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
+
+    std::vector<ClassObject> classes = create_dataset();
+    std::string mode = "threads";
+
+    if (argc > 1) {
+        mode = argv[1];
     }
 
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    if (rank == 0) {
+        std::cout << "=== School Timetable Solver ===\n";
+        std::cout << "Mode: " << mode << "\n";
+        std::cout << "Classes: " << classes.size() << ", Rooms: " << ROOMS << "\n";
+    }
+
+    if (mode == "threads") {
+        if (rank == 0) solve_threaded(classes);
+    }
+    else if (mode == "mpi") {
+        solve_mpi(argc, argv, classes);
+    }
+    else if (mode == "opencl") {
+        if (rank == 0) solve_opencl(classes);
+    }
+    else {
+        if (rank == 0) std::cout << "Unknown mode. Use: threads | mpi | opencl\n";
+    }
+
+    MPI_Finalize();
     return 0;
-    // TIP See CLion help at <a href="https://www.jetbrains.com/help/clion/">jetbrains.com/help/clion/</a>. Also, you can try interactive lessons for CLion by selecting 'Help | Learn IDE Features' from the main menu.
 }
