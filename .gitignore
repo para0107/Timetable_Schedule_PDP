@@ -1,0 +1,40 @@
+# --- Build Directories ---
+cmake-build-debug/
+cmake-build-release/
+build/
+bin/
+lib/
+
+# --- IDE Settings (CLion / IntelliJ) ---
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# --- Compiled Executables & Objects ---
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+TimetableProject
+TimetableProject.exe
+
+# --- CMake Generated Files (if created outside build folders) ---
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cbp
+
+# --- OS Generated Files ---
+.DS_Store
+Thumbs.db
+
+# --- Temporary Files ---
+*.swp
+*~
