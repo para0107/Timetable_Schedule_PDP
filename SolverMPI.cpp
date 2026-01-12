@@ -3,6 +3,7 @@
 #include <iostream>
 #include "Timetable.h"
 
+
 void backtrackMPI(int sessionIdx, std::vector<int> schedule,
                   const Problem& p, const FlattenedSchedule& fs, int rank) {
     if (sessionIdx == fs.totalSessions) {
@@ -30,21 +31,12 @@ int main(int argc, char** argv) {
 
     Problem p;
 
-    if (rank == 0) {
-        std::cout << "Enter number of days: ";
-        std::cin >> p.numDays;
-        std::cout << "Enter slots per day: ";
-        std::cin >> p.slotsPerDay;
-    }
-    MPI_Bcast(&p.numDays, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&p.slotsPerDay, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-    // Hardcoded courses (extend for input if needed)
-    if (rank == 0) {
-        p.courses.push_back({0, 1, 1, 3});
-        p.courses.push_back({1, 2, 1, 2});
-    }
-    // Optionally broadcast courses here if you add input logic
+    p.numDays = 5;
+    p.slotsPerDay = 4;
+    // Course 0: T1, G1, 3 Sessions
+    p.courses.push_back({0, 1, 1, 3});
+    // Course 1: T2, G1, 2 Sessions (Same group as above -> Conflict if same slot)
+    p.courses.push_back({1, 2, 1, 2});
 
     FlattenedSchedule fs = flatten(p);
     int totalSlots = p.numDays * p.slotsPerDay;
