@@ -1,42 +1,59 @@
-#include "Timetable.h"
 #include <mpi.h>
+#include <vector>
+#include <iostream>
+#include "Timetable.h"
 
-void run_mpi_search(int rank, int size, const std::vector<ClassObject>& classes) {
-    // Strategy: Static partitioning.
 
-    std::vector<int> indices;
-    for(size_t i=0; i<classes.size(); ++i) indices.push_back(i);
-
-    // In a real scenario, Rank 0 would probably send the 'partial' work item.
-    // Here, for simplicity, we assume they all know the dataset and split by start index.
-
-    // Each rank takes specific days for the first class.
-    for (int d = rank; d < DAYS; d += size) {
-        for (int i = 0; i < INTERVALS; ++i) {
-            for (int r = 0; r < ROOMS; ++r) {
-                // Here you would implement the backtracking logic similar to SolverThreads
-                // checking only trees that start with (FirstClass, Day=d, Slot=i, Room=r)
-            }
-        }
+void backtrackMPI(int sessionIdx, std::vector<int> schedule,
+                  const Problem& p, const FlattenedSchedule& fs, int rank) {
+    if (sessionIdx == fs.totalSessions) {
+        std::cout << "[Rank " << rank << "] SOLUTION FOUND!\n";
+        printComplexSchedule(schedule, p, fs);
+        MPI_Abort(MPI_COMM_WORLD, 0);
+        return;
     }
 
-    std::cout << "[MPI] Rank " << rank << " finished its search space.\n";
+    int totalSlots = p.numDays * p.slotsPerDay;
+    for (int slot = 0; slot < totalSlots; ++slot) {
+        if (isValid(schedule, sessionIdx, slot, p, fs)) {
+            schedule[sessionIdx] = slot;
+            backtrackMPI(sessionIdx + 1, schedule, p, fs, rank);
+        }
+    }
 }
 
-void solve_mpi(int argc, char** argv, const std::vector<ClassObject>& classes) {
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    if (rank == 0) std::cout << "[MPI] Master starting with " << size << " processes.\n";
+    Problem p;
 
-    double start_time = MPI_Wtime();
+    p.numDays = 5;
+    p.slotsPerDay = 4;
+    // Course 0: T1, G1, 3 Sessions
+    p.courses.push_back({0, 1, 1, 3});
+    // Course 1: T2, G1, 2 Sessions (Same group as above -> Conflict if same slot)
+    p.courses.push_back({1, 2, 1, 2});
 
-    run_mpi_search(rank, size, classes);
+    FlattenedSchedule fs = flatten(p);
+    int totalSlots = p.numDays * p.slotsPerDay;
+
+    double start = MPI_Wtime();
+
+    for (int slot = 0; slot < totalSlots; ++slot) {
+        if (slot % size == rank) {
+            std::vector<int> schedule(fs.totalSessions);
+            schedule[0] = slot;
+            backtrackMPI(1, schedule, p, fs, rank);
+        }
+    }
 
     MPI_Barrier(MPI_COMM_WORLD);
+    if(rank == 0) std::cout << "MPI Finished.\n";
 
-    if (rank == 0) {
-        std::cout << "[MPI] Finished in " << MPI_Wtime() - start_time << " seconds.\n";
-    }
+    MPI_Finalize();
+    return 0;
 }

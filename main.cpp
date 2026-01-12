@@ -1,50 +1,40 @@
 #include "Timetable.h"
-#include <mpi.h>
-#include <cstring>
+#include <iostream>
 
-std::vector<ClassObject> create_dataset() {
-    return {
-                {0, 101, 201, "Math"},
-                {1, 102, 201, "Physics"},
-                {2, 101, 202, "CS"},
-                {3, 103, 203, "English"},
-                {4, 102, 203, "Sport"}
-    };
-}
+int main() {
+    Problem p;
+    int numCourses;
 
-int main(int argc, char** argv) {
-    int provided;
-    MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
+    std::cout << "=== Timetable Generator ===\n";
+    std::cout << "Enter number of Days (e.g., 5): ";
+    std::cin >> p.numDays;
+    std::cout << "Enter Slots per Day (e.g., 4): ";
+    std::cin >> p.slotsPerDay;
 
-    std::vector<ClassObject> classes = create_dataset();
-    std::string mode = "threads";
+    std::cout << "Enter number of Courses: ";
+    std::cin >> numCourses;
 
-    if (argc > 1) {
-        mode = argv[1];
+    for(int i=0; i<numCourses; ++i) {
+        Course c;
+        c.id = i;
+        std::cout << "\n--- Course " << i << " ---\n";
+        std::cout << "  Teacher ID (int): "; std::cin >> c.teacherId;
+        std::cout << "  Group ID (int): ";   std::cin >> c.groupId;
+        std::cout << "  Sessions/Week: ";    std::cin >> c.sessions;
+        p.courses.push_back(c);
     }
 
-    int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    int choice;
+    std::cout << "\nChoose Method:\n1. Threads\n2. OpenCL\n> ";
+    std::cin >> choice;
 
-    if (rank == 0) {
-        std::cout << "=== School Timetable Solver ===\n";
-        std::cout << "Mode: " << mode << "\n";
-        std::cout << "Classes: " << classes.size() << ", Rooms: " << ROOMS << "\n";
-    }
-
-    if (mode == "threads") {
-        if (rank == 0) solve_threaded(classes);
-    }
-    else if (mode == "mpi") {
-        solve_mpi(argc, argv, classes);
-    }
-    else if (mode == "opencl") {
-        if (rank == 0) solve_opencl(classes);
-    }
-    else {
-        if (rank == 0) std::cout << "Unknown mode. Use: threads | mpi | opencl\n";
+    if (choice == 1) {
+        int t;
+        std::cout << "Threads count: "; std::cin >> t;
+        solveThreadsComplex(p, t);
+    } else {
+        solveOpenCLComplex(p);
     }
 
-    MPI_Finalize();
     return 0;
 }

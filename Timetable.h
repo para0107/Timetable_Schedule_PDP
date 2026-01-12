@@ -3,80 +3,88 @@
 
 #include <vector>
 #include <iostream>
-#include <string>
+#include <iomanip>
 
-// --- PROBLEM CONSTANTS ---
-const int DAYS = 5;
-const int INTERVALS = 6; // 6 slots per day
-const int ROOMS = 2;     // Keep small for testing
 
-struct ClassObject {
+struct Course {
     int id;
-    int teacher_id;
-    int group_id;
-    std::string name;
+    int teacherId;
+    int groupId;
+    int sessions;
 };
 
-struct Assignment {
-    int class_id;
-    int day;      // 0-4
-    int interval; // 0-5
-    int room_id;  // 0-(ROOMS-1)
+struct Problem {
+    int numDays;
+    int slotsPerDay;
+    std::vector<Course> courses;
 };
 
-// Represents a partial or complete schedule
-class TimetableState {
-public:
-    std::vector<Assignment> assignments;
 
-    // The core sequential validation logic
-    bool isValid(const Assignment& new_assign, const std::vector<ClassObject>& allClasses) const {
-        // Get details of the class we are trying to add
-        const ClassObject& currentClass = allClasses[new_assign.class_id];
+struct FlattenedSchedule {
+    std::vector<int> ownerCourseId;
+    int totalSessions;
+};
 
-        for (const auto& a : assignments) {
-            // 1. Check Space Collision (Same Room, Same Time)
-            if (a.day == new_assign.day &&
-                a.interval == new_assign.interval &&
-                a.room_id == new_assign.room_id) {
-                return false;
-            }
 
-            // Get details of the existing assignment
-            const ClassObject& existingClass = allClasses[a.class_id];
-
-            // 2. Check Teacher Collision (Same Teacher, Same Time)
-            if (a.day == new_assign.day &&
-                a.interval == new_assign.interval &&
-                existingClass.teacher_id == currentClass.teacher_id) {
-                return false;
-            }
-
-            // 3. Check Group Collision (Same Group, Same Time)
-            if (a.day == new_assign.day &&
-                a.interval == new_assign.interval &&
-                existingClass.group_id == currentClass.group_id) {
-                return false;
-            }
+inline FlattenedSchedule flatten(const Problem& p) {
+    FlattenedSchedule fs;
+    fs.totalSessions = 0;
+    for(const auto& c : p.courses) {
+        for(int i=0; i<c.sessions; ++i) {
+            fs.ownerCourseId.push_back(c.id);
         }
-        return true;
+        fs.totalSessions += c.sessions;
     }
+    return fs;
+}
 
-    void print(const std::vector<ClassObject>& classes) const {
-        std::cout << "\n--- Solution Found ---\n";
-        for (const auto& a : assignments) {
-            std::cout << "Class " << classes[a.class_id].name
-                      << " | Day " << a.day
-                      << " | Slot " << a.interval
-                      << " | Room " << a.room_id << "\n";
+
+inline bool isValid(const std::vector<int>& schedule, int currentSessionIdx, int currentSlot,
+                    const Problem& p, const FlattenedSchedule& fs) {
+
+    int currentDay = currentSlot / p.slotsPerDay;
+
+    int courseId = fs.ownerCourseId[currentSessionIdx];
+    const Course& currentCourse = p.courses[courseId];
+
+    for (int i = 0; i < currentSessionIdx; ++i) {
+        int prevSlot = schedule[i];
+        int prevDay = prevSlot / p.slotsPerDay;
+
+        int prevCourseId = fs.ownerCourseId[i];
+        const Course& prevCourse = p.courses[prevCourseId];
+
+        if (prevSlot == currentSlot) {
+            if (prevCourse.teacherId == currentCourse.teacherId) return false;
+            if (prevCourse.groupId == currentCourse.groupId) return false;
         }
-        std::cout << "----------------------\n";
-    }
-};
 
-// Function prototypes
-void solve_threaded(const std::vector<ClassObject>& classes);
-void solve_mpi(int argc, char** argv, const std::vector<ClassObject>& classes);
-void solve_opencl(const std::vector<ClassObject>& classes);
+        if (prevCourseId == courseId) {
+            if (prevDay == currentDay) return false;
+        }
+    }
+    return true;
+}
+
+inline void printComplexSchedule(const std::vector<int>& schedule, const Problem& p, const FlattenedSchedule& fs) {
+    std::cout << "\n=== TIMETABLE ===\n";
+    const char* days[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+
+    for (int i = 0; i < fs.totalSessions; ++i) {
+        int slot = schedule[i];
+        int day = slot / p.slotsPerDay;
+        int hour = slot % p.slotsPerDay;
+        int cID = fs.ownerCourseId[i];
+
+        std::cout << "Course " << cID
+                  << " [T:" << p.courses[cID].teacherId << ", G:" << p.courses[cID].groupId << "]"
+                  << " -> " << days[day%7] << " Hour " << hour << "\n";
+    }
+    std::cout << "=========================\n";
+}
+
+// Function
+void solveThreadsComplex(Problem p, int numThreads);
+void solveOpenCLComplex(Problem p);
 
 #endif //TIMETABLE_H

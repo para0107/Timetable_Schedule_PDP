@@ -1,73 +1,67 @@
 #include "Timetable.h"
 #include <thread>
-#include <future>
+#include <mutex>
 #include <atomic>
+#include <vector>
+#include <chrono>
 
-std::atomic<bool> found_solution(false); // Stop other threads if one succeeds
+std::mutex mtx;
+std::atomic<bool> found(false);
 
-// Recursive Backtracking Function
-bool backtrack(TimetableState current_state, std::vector<int> remaining_class_indices, const std::vector<ClassObject>& all_classes) {
-    if (found_solution) return true; // Optimization: stop if another thread finished
+void backtrack(int sessionIdx, std::vector<int> schedule,
+                      const Problem& p, const FlattenedSchedule& fs) {
+    if (found) return;
 
-    if (remaining_class_indices.empty()) {
-        if (!found_solution.exchange(true)) { // Only print once
-            current_state.print(all_classes);
+    if (sessionIdx == fs.totalSessions) {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!found) {
+            found = true;
+            printComplexSchedule(schedule, p, fs);
         }
-        return true;
+        return;
     }
 
-    int next_class_idx = remaining_class_indices.back();
-    remaining_class_indices.pop_back();
+    int totalSlots = p.numDays * p.slotsPerDay;
 
-    // Try all combinations
-    for (int d = 0; d < DAYS; ++d) {
-        for (int i = 0; i < INTERVALS; ++i) {
-            for (int r = 0; r < ROOMS; ++r) {
-                if (found_solution) return true;
-
-                Assignment new_assign = {next_class_idx, d, i, r};
-                
-                if (current_state.isValid(new_assign, all_classes)) {
-                    TimetableState next_state = current_state;
-                    next_state.assignments.push_back(new_assign);
-                    if (backtrack(next_state, remaining_class_indices, all_classes)) return true;
-                }
-            }
+    for (int slot = 0; slot < totalSlots; ++slot) {
+        if (isValid(schedule, sessionIdx, slot, p, fs)) {
+            schedule[sessionIdx] = slot;
+            backtrack(sessionIdx + 1, schedule, p, fs);
+            if (found) return;
         }
     }
-    return false;
 }
 
-void solve_threaded(const std::vector<ClassObject>& classes) {
-    std::cout << "[Threads] Starting Solver with " << std::thread::hardware_concurrency() << " threads...\n";
-    found_solution = false;
+void solveThreadsComplex(Problem p, int numThreads) {
+    FlattenedSchedule fs = flatten(p);
+    int totalSlots = p.numDays * p.slotsPerDay;
 
-    // Prepare indices
-    std::vector<int> indices;
-    for(size_t i=0; i<classes.size(); ++i) indices.push_back(i);
-    
-    // We pull the first class out to branch on it
-    int first_class = indices.back();
-    indices.pop_back();
+    std::cout << "Running Threads (" << numThreads << ")...\n";
+    std::cout << "Total Sessions to Schedule: " << fs.totalSessions << "\n";
 
-    std::vector<std::future<void>> futures;
+    auto start = std::chrono::high_resolution_clock::now();
 
-    // Parallelize based on the DAY of the first class
-    for (int d = 0; d < DAYS; ++d) {
-        futures.push_back(std::async(std::launch::async, [=, &classes]() {
-            for (int i = 0; i < INTERVALS; ++i) {
-                for (int r = 0; r < ROOMS; ++r) {
-                    if (found_solution) return;
+    std::vector<std::thread> workers;
 
-                    TimetableState root_state;
-                    root_state.assignments.push_back({first_class, d, i, r});
+    for (int t = 0; t < numThreads; ++t) {
+        workers.emplace_back([t, numThreads, p, fs, totalSlots]() {
+            for (int slot = t; slot < totalSlots; slot += numThreads) {
+                if (found) return;
 
-                    backtrack(root_state, indices, classes);
-                }
+                std::vector<int> schedule(fs.totalSessions);
+                schedule[0] = slot;
+
+                backtrack(1, schedule, p, fs);
             }
-        }));
+        });
     }
 
-    for (auto& f : futures) f.wait();
-    if (!found_solution) std::cout << "No solution found.\n";
+    for (auto& t : workers) {
+        if(t.joinable()) t.join();
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cout << "Time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms\n";
+
+    if(!found) std::cout << "No solution found.\n";
 }

@@ -1,83 +1,149 @@
 #include "Timetable.h"
-
-#ifdef ENABLE_OPENCL
-
-// Define target version to 3.0 (matches your installed headers)
-#define CL_HPP_TARGET_OPENCL_VERSION 300
-// Use the new header name as per warning
-#include <CL/opencl.hpp>
+#include <CL/cl.h>
 #include <fstream>
-#include <sstream>
+#include <cmath>
+#include <chrono>
+#include <iostream>
 
-const std::string kernelSource = R"(
-__kernel void check_timetables(__global int* results, int n_classes, int n_days, int n_slots, int n_rooms) {
-    int id = get_global_id(0);
-    // Placeholder logic:
-    if (id == 12345) {
-        results[0] = 1;
-        results[1] = id;
-    }
+std::string loadKernel(const char* name) {
+    std::ifstream in(name);
+    std::string result((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return result;
 }
-)";
 
-void solve_opencl(const std::vector<ClassObject>& classes) {
-    std::cout << "[OpenCL] Setting up GPU Context...\n";
+void solveOpenCLComplex(Problem p) {
+    FlattenedSchedule fs = flatten(p);
+    int totalSlots = p.numDays * p.slotsPerDay;
+    cl_ulong totalPermutations = (cl_ulong)std::pow(totalSlots, fs.totalSessions);
 
-    std::vector<cl::Platform> platforms;
-    cl::Platform::get(&platforms);
-    if(platforms.empty()) { std::cout << "No OpenCL platforms found.\n"; return; }
+    std::cout << "Running OpenCL...\n";
+    std::cout << "Search Space Size: " << totalPermutations << "\n";
 
-    cl::Platform platform = platforms.front();
-    std::vector<cl::Device> devices;
-    platform.getDevices(CL_DEVICE_TYPE_GPU, &devices);
-    if(devices.empty()) {
-        std::cout << "No GPU found, trying CPU...\n";
-        platform.getDevices(CL_DEVICE_TYPE_CPU, &devices);
+    int* h_flatOwner = fs.ownerCourseId.data();
+    int* h_teachers  = new int[p.courses.size()];
+    int* h_groups    = new int[p.courses.size()];
+
+    for(size_t i=0; i<p.courses.size(); ++i) {
+        h_teachers[i] = p.courses[i].teacherId;
+        h_groups[i]   = p.courses[i].groupId;
     }
-    if(devices.empty()) { std::cout << "No devices found.\n"; return; }
 
-    cl::Device device = devices.front();
-    std::cout << "[OpenCL] Using Device: " << device.getInfo<CL_DEVICE_NAME>() << "\n";
+    cl_platform_id platform_id = NULL;
+    cl_device_id device_id = NULL;
+    cl_uint ret_num_devices, ret_num_platforms;
+    cl_int err;
 
-    cl::Context context(device);
-    cl::CommandQueue queue(context, device);
-
-    // --- FIX IS HERE ---
-    // Modern OpenCL C++ bindings define Sources as std::vector<std::string>
-    cl::Program::Sources sources;
-    sources.push_back(kernelSource);
-
-    cl::Program program(context, sources);
-    if(program.build({device}) != CL_SUCCESS) {
-        std::cout << "Error building: " << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(device) << "\n";
+    err = clGetPlatformIDs(1, &platform_id, &ret_num_platforms);
+    if (err != CL_SUCCESS) {
+        std::cerr << "Failed to get platform IDs: " << err << std::endl;
         return;
     }
 
-    std::vector<int> host_results = {0, 0};
-    cl::Buffer bufferResults(context, CL_MEM_READ_WRITE, sizeof(int) * 2);
-    queue.enqueueWriteBuffer(bufferResults, CL_TRUE, 0, sizeof(int)*2, host_results.data());
-
-    cl::Kernel kernel(program, "check_timetables");
-    kernel.setArg(0, bufferResults);
-    kernel.setArg(1, (int)classes.size());
-    kernel.setArg(2, DAYS);
-    kernel.setArg(3, INTERVALS);
-    kernel.setArg(4, ROOMS);
-
-    cl::NDRange global(1000000);
-    queue.enqueueNDRangeKernel(kernel, cl::NullRange, global, cl::NullRange);
-    queue.finish();
-
-    queue.enqueueReadBuffer(bufferResults, CL_TRUE, 0, sizeof(int)*2, host_results.data());
-
-    if(host_results[0] == 1) {
-        std::cout << "[OpenCL] Found solution at index: " << host_results[1] << "\n";
-    } else {
-        std::cout << "[OpenCL] No solution found in search range.\n";
+    err = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_DEFAULT, 1, &device_id, &ret_num_devices);
+    if (err != CL_SUCCESS) {
+        std::cerr << "Failed to get device IDs: " << err << std::endl;
+        return;
     }
+
+    cl_context context = clCreateContext(NULL, 1, &device_id, NULL, NULL, &err);
+    if (err != CL_SUCCESS) {
+        std::cerr << "Failed to create context: " << err << std::endl;
+        return;
+    }
+
+    cl_command_queue queue = clCreateCommandQueue(context, device_id, 0, &err);
+    if (err != CL_SUCCESS) {
+        std::cerr << "Failed to create command queue: " << err << std::endl;
+        return;
+    }
+
+    std::string src = loadKernel("kernel.cl");
+    if (src.empty()) {
+        std::cerr << "Failed to load kernel.cl" << std::endl;
+        return;
+    }
+
+    const char* source_str = src.c_str();
+    size_t source_size = src.size();
+    cl_program program = clCreateProgramWithSource(context, 1, &source_str, &source_size, &err);
+    if (err != CL_SUCCESS) {
+        std::cerr << "Failed to create program: " << err << std::endl;
+        return;
+    }
+
+    err = clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        size_t log_size;
+        clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+        char* log = new char[log_size];
+        clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
+        std::cerr << "OpenCL Build Error:\n" << log << std::endl;
+        delete[] log;
+        return;
+    }
+
+    cl_kernel kernel = clCreateKernel(program, "searchComplex", &err);
+    if (err != CL_SUCCESS) {
+        std::cerr << "Failed to create kernel: " << err << std::endl;
+        return;
+    }
+
+    int h_flag = 0;
+    int* h_schedule = new int[fs.totalSessions];
+
+    cl_mem d_flag     = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int), &h_flag, NULL);
+    cl_mem d_schedule = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(int)*fs.totalSessions, NULL, NULL);
+    cl_mem d_owner    = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(int)*fs.totalSessions, h_flatOwner, NULL);
+    cl_mem d_teachers = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(int)*p.courses.size(), h_teachers, NULL);
+    cl_mem d_groups   = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(int)*p.courses.size(), h_groups, NULL);
+
+    clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_flag);
+    clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_schedule);
+    clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_owner);
+    clSetKernelArg(kernel, 3, sizeof(cl_mem), &d_teachers);
+    clSetKernelArg(kernel, 4, sizeof(cl_mem), &d_groups);
+    clSetKernelArg(kernel, 5, sizeof(int), &fs.totalSessions);
+    clSetKernelArg(kernel, 6, sizeof(int), &totalSlots);
+    clSetKernelArg(kernel, 7, sizeof(int), &p.slotsPerDay);
+    clSetKernelArg(kernel, 8, sizeof(cl_ulong), &totalPermutations);
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+    size_t global_size = (size_t)totalPermutations;
+    size_t local_size = 64;
+    global_size = (global_size + local_size - 1) / local_size * local_size;
+
+    err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        std::cerr << "Failed to enqueue kernel: " << err << std::endl;
+        return;
+    }
+
+    clFinish(queue);
+
+    clEnqueueReadBuffer(queue, d_flag, CL_TRUE, 0, sizeof(int), &h_flag, 0, NULL, NULL);
+
+    if (h_flag == 1) {
+        clEnqueueReadBuffer(queue, d_schedule, CL_TRUE, 0, sizeof(int)*fs.totalSessions, h_schedule, 0, NULL, NULL);
+        std::vector<int> res(h_schedule, h_schedule + fs.totalSessions);
+        printComplexSchedule(res, p, fs);
+    } else {
+        std::cout << "No solution found in searched range.\n";
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cout << "OpenCL Time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() << " ms\n";
+
+    delete[] h_teachers;
+    delete[] h_groups;
+    delete[] h_schedule;
+    clReleaseMemObject(d_flag);
+    clReleaseMemObject(d_schedule);
+    clReleaseMemObject(d_owner);
+    clReleaseMemObject(d_teachers);
+    clReleaseMemObject(d_groups);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(queue);
+    clReleaseContext(context);
 }
-#else
-void solve_opencl(const std::vector<ClassObject>& classes) {
-    std::cout << "[OpenCL] Not enabled or library not found.\n";
-}
-#endif

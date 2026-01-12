@@ -1,18 +1,57 @@
-__kernel void check_timetables(__global int* results, int n_classes, int n_days, int n_slots, int n_rooms) {
-    int id = get_global_id(0);
-    // 1. Decode 'id' into a timetable
-    // e.g. if id = 12345, map it to: Class1->Room2, Class2->Room5...
+__kernel void searchComplex(__global int* resultFlag,
+                            __global int* outSchedule,
+                            __global int* flatOwnerIds,
+                            __global int* courseTeachers,
+                            __global int* courseGroups,
+                            int totalSessions,
+                            int totalSlots,
+                            int slotsPerDay,
+                            ulong totalPerms)
+{
+    ulong gid = get_global_id(0);
 
-    // 2. Check Constraints
-    bool collision = false;
-    // ... check overlap ...
+    if (gid >= totalPerms) return;
+    if (*resultFlag == 1) return;
 
-    // 3. Write result
-    if (!collision) {
-        // Placeholder check for demonstration
-        if (id == 12345) {
-             results[0] = 1;
-             results[1] = id;
+    int schedule[32];
+    ulong temp = gid;
+
+    for(int i = 0; i < totalSessions; ++i) {
+        schedule[i] = temp % totalSlots;
+        temp /= totalSlots;
+    }
+
+    int valid = 1;
+    for(int i = 0; i < totalSessions; ++i) {
+        int dayI = schedule[i] / slotsPerDay;
+        int courseI = flatOwnerIds[i];
+
+        for(int j = i + 1; j < totalSessions; ++j) {
+            int dayJ = schedule[j] / slotsPerDay;
+            int courseJ = flatOwnerIds[j];
+
+            if (courseI == courseJ && dayI == dayJ) {
+                valid = 0; break;
+            }
+
+            if (schedule[i] == schedule[j]) {
+                if (courseTeachers[courseI] == courseTeachers[courseJ]) {
+                    valid = 0; break;
+                }
+                if (courseGroups[courseI] == courseGroups[courseJ]) {
+                    valid = 0; break;
+                }
+            }
+        }
+        if (valid == 0) break;
+    }
+
+    if(valid == 1) {
+        int old = atomic_cmpxchg(resultFlag, 0, 1);
+        if (old == 0) {
+            for(int k = 0; k < totalSessions; ++k) {
+                outSchedule[k] = schedule[k];
+            }
         }
     }
 }
